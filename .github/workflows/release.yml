@@ -30,8 +30,6 @@ jobs:
         with:
           name: release-assets
 
-      # every asset the build produced: the provenance bundle is among them only once the
-      # repository is public
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,4 +39,7 @@ jobs:
           --verify-tag
           --title "${GITHUB_REF_NAME}"
           --generate-notes
-          journal_"${GITHUB_REF_NAME}".*
+          "journal_${GITHUB_REF_NAME}.tar.gz"
+          "journal_${GITHUB_REF_NAME}.tar.gz.sigstore"
+          "journal_${GITHUB_REF_NAME}.cdx.json"
+          "journal_${GITHUB_REF_NAME}.spdx.json"
