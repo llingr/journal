@@ -13,9 +13,6 @@ permissions:
 jobs:
   analyze:
     name: analyze (go)
-    # A private repository on the Team plan cannot receive code scanning results, so the scan
-    # runs once the repository is public; a skipped job satisfies the required check.
-    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
