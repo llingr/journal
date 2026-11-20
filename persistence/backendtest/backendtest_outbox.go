@@ -44,6 +44,9 @@ func runOutboxContract(t *testing.T, newStore NewBackend) {
 	t.Run("EveryEventTakesTheRequestsAppendTime", func(t *testing.T) {
 		runEveryEventTakesTheRequestsAppendTime(t, newStore)
 	})
+	t.Run("TimesReadBackInUTC", func(t *testing.T) {
+		runTimesReadBackInUTC(t, newStore)
+	})
 	t.Run("AStatesPartitionKeyIsSetOnce", func(t *testing.T) {
 		runAStatesPartitionKeyIsSetOnce(t, newStore)
 	})
@@ -285,6 +288,45 @@ func runEveryEventTakesTheRequestsAppendTime(t *testing.T, newStore NewBackend) 
 		if !event.EventAppendTs.Equal(requestTs) {
 			t.Fatalf("version %d appended at %s, want the request's %s", event.Version,
 				event.EventAppendTs, requestTs)
+		}
+	}
+}
+
+// runTimesReadBackInUTC: every time a backend returns is in UTC, whatever zone it was written
+// in and whatever the process's own, so a publisher sees one offset for events read back and
+// for those published from memory
+func runTimesReadBackInUTC(t *testing.T, newStore NewBackend) {
+	store, ctx := newStore(t), context.Background()
+	streamID := uuid.New()
+	written := appendTs.In(time.FixedZone("New York", -5*60*60))
+
+	state := newState(streamID, 2, 1, []byte(`{}`))
+	state.LastAppendTs = written
+	_, err := store.Append(ctx, persistence.AppendRequest{
+		StreamID: streamID,
+		Events:   []persistence.PersistedEvent{newEvent(streamID, 1), newEvent(streamID, 2)},
+		AppendTs: written,
+		State:    &state,
+	})
+	requireNoError(t, err, "append two events and their state")
+
+	streamed := requireQueryStream(t, store, streamID, 1)
+	ranged, err := store.QueryStreamRange(ctx, streamID, 1, 2)
+	requireNoError(t, err, "read the range")
+	stored, _, err := store.QueryState(ctx, streamID)
+	requireNoError(t, err, "read the state")
+
+	read := []time.Time{stored.LastAppendTs}
+	for _, event := range append(streamed, ranged...) {
+		read = append(read, event.EventAppendTs)
+	}
+	if len(read) != 5 {
+		t.Fatalf("read %d times, want 5: the state's and two events each way", len(read))
+	}
+	for index, appended := range read {
+		if appended.Location() != time.UTC || !appended.Equal(appendTs) {
+			t.Errorf("time %d read back as %s in %q, want %s in UTC", index, appended,
+				appended.Location(), appendTs)
 		}
 	}
 }

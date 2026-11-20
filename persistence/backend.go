@@ -13,7 +13,8 @@ import (
 // Backend persists events and the outbox they are published from, the one port a backend
 // implements. Its Query methods only read and Append and DeletePublished write. It sees
 // payload bytes and column values, never domain event types, and returns the streams errors,
-// such as streams.ErrVersionConflict, for a caller to act on.
+// such as streams.ErrVersionConflict, for a caller to act on. Every time it returns is in UTC,
+// whatever zone it was written in.
 type Backend interface {
 	// QueryStream returns up to limit of one stream's events in ascending version order,
 	// starting at fromVersion, which is 1 or above, and streams.ErrVersionMissing when a
