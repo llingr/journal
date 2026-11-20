@@ -32,15 +32,16 @@ type Repository[S any] struct {
 
 // NewRepository is how journal.NewRepository builds a repository, and an application calls
 // that instead. It wires a store, a codec pipeline, an outbox, nil when nothing is published, the
-// lookup from a stored event type to an empty domain event, the fold, a partition key, nil
-// for the stream id, and how the state is stored, nil when it is not. Panics on a nil one of
-// the first four or an incomplete state codec, as that is a wiring mistake.
+// lookup from a stored event type to an empty domain event, the fold, nil when the state never
+// changes, a partition key, nil for the stream id, and how the state is stored, nil when it is
+// not. Panics on a nil store, pipeline or lookup, or an incomplete state codec, as that is a
+// wiring mistake.
 func NewRepository[S any](store persistence.Backend, pipeline *codec.Pipeline,
 	outbox ports.Outbox, newDomainEvent func(eventType string) (DomainEvent, error),
 	apply func(state S, event DomainEvent) (S, error),
 	partitionKey func(state Stream[S]) string, stateCodec *StateCodec[S]) *Repository[S] {
-	if store == nil || pipeline == nil || newDomainEvent == nil || apply == nil {
-		panic("streams.NewRepository needs a store, a pipeline, a domain event lookup and a fold")
+	if store == nil || pipeline == nil || newDomainEvent == nil {
+		panic("streams.NewRepository needs a store, a pipeline and a domain event lookup")
 	}
 	if stateCodec != nil && !stateCodec.valid() {
 		panic("streams.NewRepository needs a state codec with a version of 1 or above, a " +
@@ -99,7 +100,8 @@ func (s *Repository[S]) Get(ctx context.Context, streamID uuid.UUID) (Stream[S],
 
 // Head reads only the stream's last version, for a caller whose state lives elsewhere and
 // who appends without folding; the stream has the zero state and no events. A repository
-// that stores its state refuses an append to it with ErrStreamNotFolded.
+// that folds or stores its state refuses an append to it with ErrStreamNotFolded, as the new
+// events would land on the zero state rather than the stream's.
 func (s *Repository[S]) Head(ctx context.Context, streamID uuid.UUID) (Stream[S], error) {
 	version, err := s.store.QueryHead(ctx, streamID)
 	if err != nil {
@@ -145,7 +147,7 @@ func (s *Repository[S]) AppendAll(ctx context.Context, stream Stream[S],
 	if stream.version == 0 {
 		return stream, fmt.Errorf("append to stream %s: %w", stream.streamID, ErrStreamNotCreated)
 	}
-	if s.stateCodec != nil && !stream.folded {
+	if !stream.folded && (s.apply != nil || s.stateCodec != nil) {
 		return stream, fmt.Errorf("append to stream %s: %w", stream.streamID, ErrStreamNotFolded)
 	}
 	return s.write(ctx, stream, payloads, options)
@@ -171,10 +173,12 @@ func (s *Repository[S]) write(ctx context.Context, stream Stream[S], payloads []
 
 	written := stream
 	var err error
-	for _, payload := range unwrapped {
-		written.state, err = s.apply(written.state, payload)
-		if err != nil {
-			return stream, fmt.Errorf("apply %s: %w", payload.EventType(), err)
+	if s.apply != nil {
+		for _, payload := range unwrapped {
+			written.state, err = s.apply(written.state, payload)
+			if err != nil {
+				return stream, fmt.Errorf("apply %s: %w", payload.EventType(), err)
+			}
 		}
 	}
 

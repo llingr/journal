@@ -23,18 +23,50 @@ import (
 func TestNewRepositoryRefusesAMissingCollaborator(t *testing.T) {
 	defer func() {
 		if recover() == nil {
-			t.Fatal("NewRepository with no fold did not panic")
+			t.Fatal("NewRepository with no store did not panic")
 		}
 	}()
 	pipeline, err := codec.NewPipeline()
 	if err != nil {
 		t.Fatalf("build the pipeline: %v", err)
 	}
-	streams.NewRepository[int](memory.NewBackend(), pipeline, nil, domainEvents(&added{}),
-		nil, nil, nil)
+	streams.NewRepository[int](nil, pipeline, nil, domainEvents(&added{}), nil, nil, nil)
 }
 
 var errNegative = errors.New("a negative amount")
+
+// TestARepositoryWithNoFoldKeepsTheZeroState: with no fold the state never changes, a read
+// still returns the stream's events, and an append from Head is allowed, as there is no state
+// for the new events to land on wrongly
+func TestARepositoryWithNoFoldKeepsTheZeroState(t *testing.T) {
+	ctx := context.Background()
+	pipeline, err := codec.NewPipeline()
+	if err != nil {
+		t.Fatalf("build the pipeline: %v", err)
+	}
+	counters := streams.NewRepository[int](memory.NewBackend(), pipeline, nil,
+		domainEvents(&added{}), nil, nil, nil)
+	counterID := uuid.New()
+
+	_, err = counters.Create(ctx, counterID, &added{Amount: 5})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	head, err := counters.Head(ctx, counterID)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	appended, err := counters.Append(ctx, head, &added{Amount: 7})
+	if err != nil || appended.Version() != 2 || appended.State() != 0 {
+		t.Fatalf("append from the head: version %d, state %d, %v; want version 2, state 0",
+			appended.Version(), appended.State(), err)
+	}
+	read, err := counters.Get(ctx, counterID)
+	if err != nil || read.State() != 0 || len(read.DomainEvents()) != 2 {
+		t.Fatalf("get: state %d with %d events, %v; want state 0 with 2 events",
+			read.State(), len(read.DomainEvents()), err)
+	}
+}
 
 // added is an event that adds its amount to a counter
 type added struct {

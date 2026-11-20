@@ -9,8 +9,8 @@ import (
 	"github.com/llingr/journal/codec"
 )
 
-// ErrStreamNotFolded is an append, on a repository that stores its state, to a stream read by
-// Head, which has no state to fold the new events onto
+// ErrStreamNotFolded is an append, on a repository that folds or stores its state, to a stream
+// read by Head, which has no state to fold the new events onto
 var ErrStreamNotFolded = errors.New("stream has no folded state")
 
 // StateCodec is how a repository stores its state S beside the events, so Get reads one row

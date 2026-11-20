@@ -96,7 +96,7 @@ func WithSnapshot[S any](stateCodec streams.StateCodec[S]) RepositoryOption[S] {
 // NewRepository returns the repository of one aggregate over the store. Without transitions
 // its state never changes, for a host whose state lives elsewhere and that appends from Head,
 // as journal.NewRepository[struct{}](eventStore); Get on it fails with ErrNoTransition at the
-// first stored event.
+// first stored event. With transitions, an append from Head is streams.ErrStreamNotFolded.
 func NewRepository[S any](store *Store, options ...RepositoryOption[S]) *streams.Repository[S] {
 	if store == nil {
 		panic("journal.NewRepository needs a store")
@@ -123,15 +123,16 @@ func NewRepository[S any](store *Store, options ...RepositoryOption[S]) *streams
 		}
 		return transition.newDomainEvent(), nil
 	}
-	apply := func(state S, payload streams.DomainEvent) (S, error) {
-		if len(byEventType) == 0 {
-			return state, nil
+	// nil without transitions, as the state never changes, so the repository appends from Head
+	var apply func(state S, payload streams.DomainEvent) (S, error)
+	if len(byEventType) > 0 {
+		apply = func(state S, payload streams.DomainEvent) (S, error) {
+			transition, found := byEventType[payload.EventType()]
+			if !found {
+				return state, fmt.Errorf("%w: %s", ErrNoTransition, payload.EventType())
+			}
+			return transition.apply(state, payload)
 		}
-		transition, found := byEventType[payload.EventType()]
-		if !found {
-			return state, fmt.Errorf("%w: %s", ErrNoTransition, payload.EventType())
-		}
-		return transition.apply(state, payload)
 	}
 	// a nil outbox, not a typed nil, so the repository knows nothing is published
 	var committed ports.Outbox
