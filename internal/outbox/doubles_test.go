@@ -35,10 +35,10 @@ type memoryStore struct {
 	pending            map[uuid.UUID][]pendingRow
 	pendingStreamCalls int
 	pendingStreamsErr  error
-	pendingErr         error // fails QueryPending
-	rangeErr           error // fails QueryStreamRange
-	headErr            error // fails QueryHead
-	deleteErr          error // fails DeletePublished
+	pendingErr         error    // fails QueryPending
+	rangeErr           error    // fails QueryStreamRange
+	headErr            error    // fails QueryHead
+	deleteErr          error    // fails DeletePublished
 	reads              []string // each QueryStreamRange range
 }
 
