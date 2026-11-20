@@ -45,8 +45,8 @@ type Backend interface {
 type Outbox interface {
 	ports.Outbox
 
-	// Start runs the sweep on its own goroutine, at once and then on its interval; it is
-	// called once
+	// Start runs the sweep on its own goroutine, at once and then on its interval; a Start
+	// after the first, or after Shutdown, does nothing
 	Start(ctx context.Context)
 
 	// Sweep publishes the streams with rows appended in the last window and more than a
@@ -67,6 +67,7 @@ type Outbox interface {
 	RepublishEvent(ctx context.Context, streamID uuid.UUID, version int32,
 		condition publish.RepublishCondition) error
 
-	// Shutdown stops the sweeps, waiting for the one in hand until ctx ends
+	// Shutdown stops the sweeps for good, waiting for the one in hand until ctx ends; called
+	// again, it waits again
 	Shutdown(ctx context.Context) error
 }
