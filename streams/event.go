@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 The journal Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package streams holds the event store's streams: State, one stream at a version, the
+// Package streams holds the event store's streams: Stream, one stream at a version, the
 // Repository that reads and writes them, the DomainEvent an application defines, the Event
 // it is stored as, and the errors a caller acts on.
 package streams
@@ -15,7 +15,7 @@ import (
 	"github.com/llingr/journal/persistence"
 )
 
-// Event is one stored event with its payload decoded: what State.Events returns and what a
+// Event is one stored event with its payload decoded: what Stream.Events returns and what a
 // Publisher is sent
 type Event struct {
 	StreamID   uuid.UUID
