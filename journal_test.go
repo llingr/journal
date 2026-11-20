@@ -32,6 +32,12 @@ func TestWiringMistakesStopAtConstruction(t *testing.T) {
 		"a compression minimum over 2048 bytes": func() {
 			journal.WithCompressionMinimumBytes(2049)
 		},
+		"a compression concurrency of 0": func() {
+			journal.WithCompressionConcurrency(0)
+		},
+		"a compression concurrency over 256": func() {
+			journal.WithCompressionConcurrency(257)
+		},
 		"a batch size of 0": func() {
 			journal.WithPublishBatchSize(0)
 		},

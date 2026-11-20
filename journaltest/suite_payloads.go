@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -25,6 +27,54 @@ var payloadCases = []suiteCase{
 	{"EveryCompressionReadsBack", runEveryCompressionReadsBack},
 	{"ZstdIsTheDefaultFrom128Bytes", runZstdIsTheDefaultFrom128Bytes},
 	{"EachEventKeepsItsDataFormat", runEachEventKeepsItsDataFormat},
+	{"OneCompressionSlotServesEveryWriterAndReader",
+		runOneCompressionSlotServesEveryWriterAndReader},
+}
+
+// runOneCompressionSlotServesEveryWriterAndReader: with WithCompressionConcurrency(1), writers
+// and readers racing on every bounded compression share the one slot, and each of them
+// finishes with its own payload
+func runOneCompressionSlotServesEveryWriterAndReader(t *testing.T, backend persistence.Backend) {
+	ctx := context.Background()
+	for _, compression := range []compress.DataCompression{compress.Gzip, compress.LZ4,
+		compress.Zstd} {
+		publisher := &recordingPublisher{}
+		orders := newOrders(storeWith(backend, publisher, nil,
+			journal.WithDataCompression(compression), journal.WithCompressionConcurrency(1)))
+
+		const writers = 16
+		var racing sync.WaitGroup
+		for writer := range writers {
+			racing.Go(func() {
+				orderID := uuid.New()
+				note := strings.Repeat(fmt.Sprintf("writer %d ", writer), 100)
+				_, err := orders.Create(ctx, orderID, &placed{Amount: writer, Note: note})
+				if err != nil {
+					t.Errorf("%s: create for writer %d: %v", compression, writer, err)
+					return
+				}
+				read, err := orders.Get(ctx, orderID)
+				if err != nil {
+					t.Errorf("%s: get for writer %d: %v", compression, writer, err)
+					return
+				}
+				got := read.DomainEvents()[0].(*placed)
+				if got.Amount != writer || got.Note != note {
+					t.Errorf("%s: writer %d read back amount %d and a note of %d bytes",
+						compression, writer, got.Amount, len(got.Note))
+				}
+				stored, err := backend.QueryStream(ctx, orderID, 1, 1)
+				if err != nil || len(stored) != 1 || stored[0].DataCompression != compression {
+					t.Errorf("%s: writer %d's event read back as %+v, %v; want one stored "+
+						"with %s", compression, writer, stored, err, compression)
+				}
+			})
+		}
+		racing.Wait()
+		if published := len(publisher.published()); published != writers {
+			t.Errorf("%s: %d events published, want %d", compression, published, writers)
+		}
+	}
 }
 
 // runEachEventKeepsItsDataFormat: events of different formats in one stream are each stored,

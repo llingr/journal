@@ -45,9 +45,9 @@ func TestAnAlteredPayloadNeverDecodes(t *testing.T) {
 	ctx := context.Background()
 	keyring := newKeyring()
 	sealing := newPipeline(t,
-		codec.CompressWith(compress.NewLZ4()),
+		codec.CompressWith(compress.NewLZ4(compress.DefaultConcurrency)),
 		codec.EncryptWith(encrypt.NewAESGCM(keyring)))
-	compressing := newPipeline(t, codec.CompressWith(compress.NewLZ4()))
+	compressing := newPipeline(t, codec.CompressWith(compress.NewLZ4(compress.DefaultConcurrency)))
 
 	sealed := encode(t, sealing, "Happened", compressible)
 	flipped := sealed
@@ -97,12 +97,12 @@ func TestAFailedSealFailsTheEncode(t *testing.T) {
 func TestSourcesResolveWhatWasStored(t *testing.T) {
 	keyring := newKeyring()
 	written := encode(t, newPipeline(t,
-		codec.CompressWith(compress.NewLZ4()),
+		codec.CompressWith(compress.NewLZ4(compress.DefaultConcurrency)),
 		codec.EncryptWith(encrypt.NewXChaCha20(keyring))), "Happened", compressible)
 
 	resolving := newPipeline(t,
 		codec.WithCompressorSource(compressorSource{
-			compress.LZ4: compress.NewLZ4(),
+			compress.LZ4: compress.NewLZ4(compress.DefaultConcurrency),
 		}),
 		codec.WithEncryptorSource(encryptorSource{
 			encrypt.XChaCha20Poly1305: encrypt.NewXChaCha20(keyring),
@@ -125,25 +125,25 @@ func TestSourcesResolveWhatWasStored(t *testing.T) {
 func TestAWrittenAlgorithmKeepsTheCallersSource(t *testing.T) {
 	keyring := newKeyring()
 	written := encode(t, newPipeline(t,
-		codec.CompressWith(compress.NewLZ4()),
+		codec.CompressWith(compress.NewLZ4(compress.DefaultConcurrency)),
 		codec.EncryptWith(encrypt.NewAESGCM(keyring))), "Happened", compressible)
 
 	for name, options := range map[string][]codec.Option{
 		"sources first": {
 			codec.WithCompressorSource(compressorSource{
-				compress.LZ4: compress.NewLZ4(),
+				compress.LZ4: compress.NewLZ4(compress.DefaultConcurrency),
 			}),
 			codec.WithEncryptorSource(encryptorSource{
 				encrypt.AESGCM: encrypt.NewAESGCM(keyring),
 			}),
-			codec.CompressWith(compress.NewGzip(gzip.BestSpeed)),
+			codec.CompressWith(compress.NewGzip(gzip.BestSpeed, compress.DefaultConcurrency)),
 			codec.EncryptWith(encrypt.NewXChaCha20(keyring)),
 		},
 		"writers first": {
-			codec.CompressWith(compress.NewGzip(gzip.BestSpeed)),
+			codec.CompressWith(compress.NewGzip(gzip.BestSpeed, compress.DefaultConcurrency)),
 			codec.EncryptWith(encrypt.NewXChaCha20(keyring)),
 			codec.WithCompressorSource(compressorSource{
-				compress.LZ4: compress.NewLZ4(),
+				compress.LZ4: compress.NewLZ4(compress.DefaultConcurrency),
 			}),
 			codec.WithEncryptorSource(encryptorSource{
 				encrypt.AESGCM: encrypt.NewAESGCM(keyring),

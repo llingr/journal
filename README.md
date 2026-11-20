@@ -169,6 +169,7 @@ your logs and alerts; the library itself never logs.
 | `WithPublisher(publisher)` | none: events are saved, not published | |
 | `WithDataCompression(compression)` | `compress.Zstd` | `Zstd`, `Gzip`, `LZ4`, `Snappy`, `None` |
 | `WithCompressionMinimumBytes(bytes)`, the smallest payload compressed | 128 | 1 to 2048 |
+| `WithCompressionConcurrency(calls)`, the payloads each of gzip, lz4 and zstd compresses or decompresses at once | 16 | 1 to 256 |
 | `WithPublishTimeout(timeout)`, for each call to the publisher | 10 seconds | 1 second to 1 minute |
 | `WithPublishBatchSize(size)`, the most events in one call | 25 | 1 to 1000 |
 | `WithSweepInterval(interval)`, how often failed publishes are retried | 3 hours | 15 seconds to 1 week |
