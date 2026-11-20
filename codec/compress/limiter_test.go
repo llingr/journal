@@ -109,8 +109,8 @@ func TestACallBeyondTheConcurrencyWaitsForASlot(t *testing.T) {
 					}()
 					synctest.Wait()
 					select {
-					case <-done:
-						t.Fatalf("%s ran with every slot taken", method)
+					case err := <-done:
+						t.Fatalf("%s ran with every slot taken, returning %v", method, err)
 					default:
 					}
 

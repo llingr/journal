@@ -4,7 +4,7 @@
 SHELL := /bin/bash
 
 # Built with a Go at least as new as go.mod's go directive, which it refuses otherwise
-GOLANGCI_LINT_VERSION := v2.14.0
+GOLANGCI_LINT_VERSION := v2.15.0
 
 COVERAGE_PROFILE := .coverage/coverage.out
 
