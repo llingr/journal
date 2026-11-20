@@ -38,10 +38,12 @@ func (s *Repository[S]) fold(ctx context.Context, streamID uuid.UUID) (Stream[S]
 			}
 			stream.events = append(stream.events, decoded)
 			stream.domainEvents = append(stream.domainEvents, payload)
-			stream.state, err = s.apply(stream.state, payload)
-			if err != nil {
-				return Stream[S]{}, fmt.Errorf("apply %s version %d: %w",
-					event.EventType, event.Version, err)
+			if s.apply != nil {
+				stream.state, err = s.apply(stream.state, payload)
+				if err != nil {
+					return Stream[S]{}, fmt.Errorf("apply %s version %d: %w",
+						event.EventType, event.Version, err)
+				}
 			}
 			stream.version = event.Version
 			stream.lastEventType = event.EventType

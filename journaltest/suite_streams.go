@@ -24,12 +24,39 @@ var streamCases = []suiteCase{
 	{"ATransitionThatRefusesWritesNothing", runATransitionThatRefusesWritesNothing},
 	{"AnEventWithNoTransitionIsRefused", runAnEventWithNoTransitionIsRefused},
 	{"AHostWithNoTransitionsAppendsFromTheHead", runAHostWithNoTransitionsAppendsFromTheHead},
+	{"AnAppendFromHeadIsRefusedWhenTheStateIsFolded",
+		runAnAppendFromHeadIsRefusedWhenTheStateIsFolded},
 	{"EachCallRefusesTheWrongCase", runEachCallRefusesTheWrongCase},
 	{"AStaleAppendIsAVersionConflict", runAStaleAppendIsAVersionConflict},
 	{"RacingAppendsHaveOneWinner", runRacingAppendsHaveOneWinner},
 	{"MetadataTravelsWithItsEvent", runMetadataTravelsWithItsEvent},
 	{"AfterCommitRunsOnlyOnceCommitted", runAfterCommitRunsOnlyOnceCommitted},
 	{"AnEventWithNoPayloadIsStored", runAnEventWithNoPayloadIsStored},
+}
+
+// runAnAppendFromHeadIsRefusedWhenTheStateIsFolded: a stream read by Head has no state, so a
+// repository with transitions refuses to fold new events onto it, whether the zero state would
+// accept them or not, and writes and publishes nothing
+func runAnAppendFromHeadIsRefusedWhenTheStateIsFolded(t *testing.T,
+	backend persistence.Backend) {
+	ctx := context.Background()
+	publisher := &recordingPublisher{}
+	orders := newOrders(storeWith(backend, publisher, nil))
+	orderID := uuid.New()
+
+	_, err := orders.Create(ctx, orderID, &placed{Amount: 5})
+	requireNoError(t, err, "create")
+	head, err := orders.Head(ctx, orderID)
+	requireNoError(t, err, "head")
+	for name, event := range map[string]streams.DomainEvent{
+		"an event the zero state accepts": &marked{},
+		"an event the zero state refuses": &shipped{},
+	} {
+		_, err = orders.Append(ctx, head, event)
+		requireError(t, err, streams.ErrStreamNotFolded, "append %s from the head", name)
+	}
+	requireHead(t, backend, orderID, 1)
+	requireVersions(t, "published", publisher.versions(), 1)
 }
 
 // runTransitionsFoldTheStream: each event moves the state through its own typed transition,
