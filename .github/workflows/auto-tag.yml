@@ -15,7 +15,8 @@ concurrency:
 jobs:
   tag:
     # Computes the next version from conventional commit subjects since the
-    # last v* tag (feat -> minor, anything else -> patch) and pushes the tag.
+    # last v* tag (feat -> minor, fix, perf or docs -> patch) and pushes the
+    # tag; with only ci, build, test or chore commits since it, none is pushed.
     # The first tag is v0.1.0. Before v1 a breaking change bumps the minor
     # version, as the README promises; from v1 major bumps are manual, as a
     # new Go major changes the module path (/v2).
@@ -48,6 +49,13 @@ jobs:
               exit 0
             fi
             subjects=$(git log --format=%s "$last..$GITHUB_SHA")
+            # ci, build, test and chore change nothing a user fetches, so they wait for the
+            # next feat, fix, perf, docs or breaking commit to go out with
+            if ! echo "$subjects" | grep -qE \
+              '^(feat|fix|perf|docs)(\(.+\))?!?:|^[a-z]+(\(.+\))?!:|BREAKING CHANGE'; then
+              echo "no feat, fix, perf, docs or breaking commit since $last; nothing to tag"
+              exit 0
+            fi
             version="${last#v}"
             maj="${version%%.*}"; rest="${version#*.}"
             min="${rest%%.*}"; pat="${rest#*.}"
