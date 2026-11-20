@@ -12,19 +12,30 @@ import (
 	"github.com/google/uuid"
 )
 
-// Start runs a sweep at once, then one every sweepInterval
+// Start runs a sweep at once, then one every sweepInterval, unless it has started or shut
+// down already
 func (o *outbox) Start(ctx context.Context) {
+	o.lifecycle.Lock()
+	defer o.lifecycle.Unlock()
+	if o.stop != nil || o.isShutDown {
+		return
+	}
 	sweepCtx, stop := context.WithCancel(ctx)
 	o.stop = stop
 	go o.runSweeps(sweepCtx)
 }
 
-// Shutdown stops the sweeps and waits for the one in hand
+// Shutdown stops the sweeps for good and waits for the one in hand
 func (o *outbox) Shutdown(ctx context.Context) error {
-	if o.stop == nil {
+	o.lifecycle.Lock()
+	o.isShutDown = true
+	stop := o.stop
+	o.lifecycle.Unlock()
+
+	if stop == nil {
 		return nil
 	}
-	o.stop()
+	stop()
 	select {
 	case <-o.stopped:
 		return nil

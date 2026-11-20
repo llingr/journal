@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,8 +50,11 @@ type outbox struct {
 	sweepInterval  time.Duration
 	publishTimeout time.Duration
 	batchSize      int
-	stop           context.CancelFunc
-	stopped        chan struct{}
+
+	lifecycle  sync.Mutex         // guards stop and isShutDown
+	stop       context.CancelFunc // ends the sweeps, set by the one Start that runs them
+	isShutDown bool               // so a Start after Shutdown runs nothing
+	stopped    chan struct{}      // closed once the sweeps have ended
 }
 
 // Option configures an Outbox

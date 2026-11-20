@@ -91,14 +91,16 @@ func NewStore(backend persistence.Backend, options ...StoreOption) *Store {
 }
 
 // Start runs the sweep, at once and then every interval, which publishes events a crash or a
-// failed publish left behind; without a publisher there is nothing to sweep
+// failed publish left behind; without a publisher there is nothing to sweep. A Start after the
+// first, or after Shutdown, does nothing.
 func (s *Store) Start(ctx context.Context) {
 	if s.outbox != nil {
 		s.outbox.Start(ctx)
 	}
 }
 
-// Shutdown stops the sweep, waiting for the one in hand until ctx ends
+// Shutdown stops the sweep for good, waiting for the one in hand until ctx ends; called again,
+// as after its deadline, it waits again. Start and Shutdown are safe from any goroutine.
 func (s *Store) Shutdown(ctx context.Context) error {
 	if s.outbox == nil {
 		return nil
