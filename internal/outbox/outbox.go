@@ -40,6 +40,9 @@ const (
 	sweepWindows = 3
 	// streams a sweep lists at a time
 	sweepStreams = 100
+	// versions read from the store at a time, so neither a backlog of failed publishes nor a
+	// long republish is ever read whole
+	readPageSize = 250
 )
 
 type outbox struct {
@@ -131,25 +134,24 @@ func (o *outbox) Publish(ctx context.Context, streamID uuid.UUID, earliestPendin
 	}
 	ctx = context.WithoutCancel(ctx)
 
-	var toSend []persistence.PersistedEvent
+	var earlier []int32
+	var err error
 	if earliestPending > 0 && earliestPending < committed[0].Version {
-		earlier, err := o.readPending(ctx, streamID, committed[0].Version-1)
+		earlier, err = o.pendingThrough(ctx, streamID, committed[0].Version-1)
 		if err != nil {
 			o.failed(ctx, streamID, err)
 			return
 		}
-		toSend = earlier
 	}
-	toSend = append(toSend, committed...)
-	_, err := o.sendAll(ctx, streamID, toSend)
+	_, err = o.sendPending(ctx, streamID, earlier, committed)
 	if err != nil {
 		o.failed(ctx, streamID, err)
 	}
 }
 
-// readPending reads the stream's pending versions through throughVersion and their events
-func (o *outbox) readPending(ctx context.Context, streamID uuid.UUID,
-	throughVersion int32) ([]persistence.PersistedEvent, error) {
+// pendingThrough is the stream's pending versions through throughVersion, in order
+func (o *outbox) pendingThrough(ctx context.Context, streamID uuid.UUID,
+	throughVersion int32) ([]int32, error) {
 	versions, err := o.store.QueryPending(ctx, streamID)
 	if err != nil {
 		return nil, fmt.Errorf("publish stream %s: %w", streamID, err)
@@ -157,7 +159,36 @@ func (o *outbox) readPending(ctx context.Context, streamID uuid.UUID,
 	for len(versions) > 0 && versions[len(versions)-1] > throughVersion {
 		versions = versions[:len(versions)-1]
 	}
-	return o.readVersions(ctx, streamID, versions)
+	return versions, nil
+}
+
+// sendPending sends the pending versions given and then the events after them, reading the
+// versions a page of at most readPageSize at a time and sending each page before reading the
+// next. The events after go with the last page, and nothing is sent past the first failure,
+// so they never overtake a version still pending. It returns how many are durable.
+func (o *outbox) sendPending(ctx context.Context, streamID uuid.UUID, pending []int32,
+	after []persistence.PersistedEvent) (int, error) {
+	sent := 0
+	for {
+		pageLength := 0
+		for pageLength < len(pending) && pending[pageLength]-pending[0] < readPageSize {
+			pageLength++
+		}
+		page, err := o.readVersions(ctx, streamID, pending[:pageLength])
+		if err != nil {
+			return sent, err
+		}
+		pending = pending[pageLength:]
+		if len(pending) == 0 {
+			page = append(page, after...)
+		}
+		var pageSent int
+		pageSent, err = o.sendAll(ctx, streamID, page)
+		sent += pageSent
+		if err != nil || len(pending) == 0 {
+			return sent, err
+		}
+	}
 }
 
 // readVersions reads the events of the versions given, in order; a version whose outbox row

@@ -15,9 +15,6 @@ import (
 	"github.com/llingr/journal/streams"
 )
 
-// republishPageSize is how many versions a republish of every version reads at a time
-const republishPageSize = 250
-
 func (o *outbox) RepublishEvents(ctx context.Context, streamID uuid.UUID, fromVersion int32,
 	condition publish.RepublishCondition) (int, error) {
 	pending, err := o.pendingFrom(ctx, streamID, fromVersion)
@@ -27,12 +24,7 @@ func (o *outbox) RepublishEvents(ctx context.Context, streamID uuid.UUID, fromVe
 
 	switch condition {
 	case publish.IfUnpublished:
-		var toSend []persistence.PersistedEvent
-		toSend, err = o.readVersions(ctx, streamID, pending)
-		if err != nil {
-			return 0, err
-		}
-		return o.sendAll(ctx, streamID, toSend)
+		return o.sendPending(ctx, streamID, pending, nil)
 	case publish.Always:
 		return o.sendToHead(ctx, streamID, fromVersion)
 	}
@@ -90,7 +82,7 @@ func (o *outbox) pendingFrom(ctx context.Context, streamID uuid.UUID,
 }
 
 // sendToHead sends the stream's events from fromVersion to its last, reading and sending
-// republishPageSize at a time so a long stream is never held whole, and stops at the first
+// readPageSize at a time so a long stream is never held whole, and stops at the first
 // failure; it returns how many are durable
 func (o *outbox) sendToHead(ctx context.Context, streamID uuid.UUID,
 	fromVersion int32) (int, error) {
@@ -107,8 +99,8 @@ func (o *outbox) sendToHead(ctx context.Context, streamID uuid.UUID,
 	pageStart := fromVersion
 	for {
 		pageEnd := head
-		if head-pageStart >= republishPageSize {
-			pageEnd = pageStart + republishPageSize - 1
+		if head-pageStart >= readPageSize {
+			pageEnd = pageStart + readPageSize - 1
 		}
 		var page []persistence.PersistedEvent
 		page, err = o.store.QueryStreamRange(ctx, streamID, pageStart, pageEnd)
