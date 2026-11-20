@@ -110,10 +110,10 @@ func (o *outbox) sweep(ctx context.Context, window time.Duration) (int, uuid.UUI
 
 // publishPending publishes every pending row of one stream, and is whether it sent any
 func (o *outbox) publishPending(ctx context.Context, streamID uuid.UUID) (bool, error) {
-	pending, err := o.readPending(ctx, streamID, math.MaxInt32)
+	pending, err := o.pendingThrough(ctx, streamID, math.MaxInt32)
 	if err != nil || len(pending) == 0 {
 		return false, err
 	}
-	_, err = o.sendAll(ctx, streamID, pending)
+	_, err = o.sendPending(ctx, streamID, pending, nil)
 	return true, err
 }
