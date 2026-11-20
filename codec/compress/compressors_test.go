@@ -19,7 +19,11 @@ import (
 
 const (
 	payloadSize = 25_000
-	goroutines  = 1000
+
+	// four callers for each slot of the default bound, so every call contends for one and the
+	// pooled writers and readers pass between goroutines; under -race each goroutine adds to
+	// the detector's own memory, which a thousand took past 600 MB
+	goroutines = 4 * DefaultConcurrency
 )
 
 type compressorCase struct {
@@ -30,14 +34,14 @@ type compressorCase struct {
 
 var compressorCases = []compressorCase{
 	{"gzip", func() Compressor {
-		return NewGzip(gzip.DefaultCompression)
+		return NewGzip(gzip.DefaultCompression, DefaultConcurrency)
 	}, Gzip},
 	{"lz4", func() Compressor {
-		return NewLZ4()
+		return NewLZ4(DefaultConcurrency)
 	}, LZ4},
 	{"snappy", NewSnappy, Snappy},
 	{"zstd", func() Compressor {
-		return NewZstd(zstd.SpeedDefault)
+		return NewZstd(zstd.SpeedDefault, DefaultConcurrency)
 	}, Zstd},
 }
 
@@ -248,8 +252,8 @@ func TestSequentialReuseAcrossSizes(t *testing.T) {
 // TestDistinctInstancesKeepTheirOwnConfiguration: level lives in the instance, not a global.
 func TestDistinctInstancesKeepTheirOwnConfiguration(t *testing.T) {
 	plain := compressibleBytes(payloadSize)
-	fast := NewGzip(gzip.BestSpeed)
-	best := NewGzip(gzip.BestCompression)
+	fast := NewGzip(gzip.BestSpeed, DefaultConcurrency)
+	best := NewGzip(gzip.BestCompression, DefaultConcurrency)
 	fastOut := roundTrip(t, fast, plain)
 	bestOut := roundTrip(t, best, plain)
 	roundTrip(t, fast, plain)
@@ -273,11 +277,11 @@ func TestGzipLevels(t *testing.T) {
 		gzip.BestCompression,
 	}
 	for _, level := range levels {
-		roundTrip(t, NewGzip(level), plain)
+		roundTrip(t, NewGzip(level, DefaultConcurrency), plain)
 	}
 	for _, level := range []int{-3, 10, 42} {
 		recovered := constructionPanic(func() {
-			NewGzip(level)
+			NewGzip(level, DefaultConcurrency)
 		})
 		err, isError := recovered.(error)
 		if !isError || !errors.Is(err, ErrGzipLevel) {
@@ -289,11 +293,11 @@ func TestGzipLevels(t *testing.T) {
 // TestLZ4Options: an option lz4 rejects stops the program where the compressor is built.
 func TestLZ4Options(t *testing.T) {
 	plain := randomBytes(11, 1024)
-	roundTrip(t, NewLZ4(), plain)
-	roundTrip(t, NewLZ4(lz4.CompressionLevelOption(lz4.Level9)), plain)
+	roundTrip(t, NewLZ4(DefaultConcurrency), plain)
+	roundTrip(t, NewLZ4(DefaultConcurrency, lz4.CompressionLevelOption(lz4.Level9)), plain)
 
 	recovered := constructionPanic(func() {
-		NewLZ4(lz4.CompressionLevelOption(lz4.CompressionLevel(99)))
+		NewLZ4(DefaultConcurrency, lz4.CompressionLevelOption(lz4.CompressionLevel(99)))
 	})
 	if recovered == nil {
 		t.Error("an option lz4 rejects did not stop NewLZ4")
@@ -310,10 +314,11 @@ func TestZstdLevels(t *testing.T) {
 		zstd.SpeedBestCompression,
 	}
 	for _, level := range levels {
-		roundTrip(t, NewZstd(level), plain)
+		// one encoder each, as at best compression an encoder holds about 35 MB
+		roundTrip(t, NewZstd(level, MinimumConcurrency), plain)
 	}
 	recovered := constructionPanic(func() {
-		NewZstd(zstd.EncoderLevel(99))
+		NewZstd(zstd.EncoderLevel(99), DefaultConcurrency)
 	})
 	if recovered == nil {
 		t.Error("an unsupported level did not stop NewZstd")
@@ -367,8 +372,8 @@ func TestOutputIsStandardFormat(t *testing.T) {
 	}
 }
 
-// TestConcurrentRoundTrips: one shared instance, 1000 goroutines, distinct payloads, run under
-// -race.
+// TestConcurrentRoundTrips: one shared instance, more goroutines than slots, distinct
+// payloads, run under -race.
 func TestConcurrentRoundTrips(t *testing.T) {
 	for _, testCase := range compressorCases {
 		t.Run(testCase.name, func(t *testing.T) {

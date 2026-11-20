@@ -41,11 +41,12 @@ type Store struct {
 type StoreOption func(settings *storeSettings)
 
 type storeSettings struct {
-	publisher            publish.Publisher
-	compressor           compress.Compressor
-	compressMinimumBytes int
-	hooks                publish.Hooks
-	outbox               []outbox.Option
+	publisher              publish.Publisher
+	compression            compress.DataCompression
+	compressMinimumBytes   int
+	compressionConcurrency int
+	hooks                  publish.Hooks
+	outbox                 []outbox.Option
 }
 
 // NewStore returns the Store over a backend. Payloads of 128 bytes or more are compressed with zstd
@@ -56,20 +57,24 @@ func NewStore(backend persistence.Backend, options ...StoreOption) *Store {
 		panic("journal.NewStore needs a backend")
 	}
 	settings := storeSettings{
-		compressor:           compressorFor(compress.Zstd),
-		compressMinimumBytes: defaultCompressionMinimumBytes,
+		compression:            compress.Zstd,
+		compressMinimumBytes:   defaultCompressionMinimumBytes,
+		compressionConcurrency: compress.DefaultConcurrency,
 	}
 	for _, option := range options {
 		option(&settings)
 	}
 
 	// every compression is read, so a change of setting leaves older rows readable
+	concurrency := settings.compressionConcurrency
 	pipelineOptions := []codec.Option{
-		codec.DecompressWith(compress.NewGzip(gzip.DefaultCompression), compress.NewLZ4(),
-			compress.NewSnappy(), compress.NewZstd(zstd.SpeedDefault)),
+		codec.DecompressWith(compress.NewGzip(gzip.DefaultCompression, concurrency),
+			compress.NewLZ4(concurrency), compress.NewSnappy(),
+			compress.NewZstd(zstd.SpeedDefault, concurrency)),
 	}
-	if settings.compressor != nil {
-		pipelineOptions = append(pipelineOptions, codec.CompressWith(settings.compressor),
+	compressor := compressorFor(settings.compression, concurrency)
+	if compressor != nil {
+		pipelineOptions = append(pipelineOptions, codec.CompressWith(compressor),
 			codec.WithSelector(func(_ string, plainSize int) (bool, bool) {
 				return plainSize >= settings.compressMinimumBytes, true
 			}))
@@ -157,26 +162,30 @@ func WithPublisher(publisher publish.Publisher) StoreOption {
 // without it, and compress.None stores every payload as it is. Panics on any
 // other value, as that is a wiring mistake.
 func WithDataCompression(compression compress.DataCompression) StoreOption {
-	compressor := compressorFor(compression)
+	_, err := compress.Parse(string(compression))
+	if err != nil {
+		panic(fmt.Errorf("journal.WithDataCompression: %w", err))
+	}
 	return func(settings *storeSettings) {
-		settings.compressor = compressor
+		settings.compression = compression
 	}
 }
 
-func compressorFor(compression compress.DataCompression) compress.Compressor {
+// compressorFor is the compressor payloads are written with, nil for compress.None
+func compressorFor(compression compress.DataCompression,
+	concurrency int) compress.Compressor {
 	switch compression {
 	case compress.Zstd:
-		return compress.NewZstd(zstd.SpeedDefault)
+		return compress.NewZstd(zstd.SpeedDefault, concurrency)
 	case compress.Gzip:
-		return compress.NewGzip(gzip.DefaultCompression)
+		return compress.NewGzip(gzip.DefaultCompression, concurrency)
 	case compress.LZ4:
-		return compress.NewLZ4()
+		return compress.NewLZ4(concurrency)
 	case compress.Snappy:
 		return compress.NewSnappy()
-	case compress.None:
-		return nil
 	}
-	panic(fmt.Sprintf("journal.WithDataCompression: unknown compression %q", compression))
+	// compress.None, the only other name WithDataCompression accepts
+	return nil
 }
 
 // WithSweepInterval sets how often the sweep runs, three hours without it; panics outside
@@ -210,6 +219,19 @@ func WithPublishBatchSize(size int) StoreOption {
 func WithHooks(hooks publish.Hooks) StoreOption {
 	return func(settings *storeSettings) {
 		settings.hooks = hooks
+	}
+}
+
+// WithCompressionConcurrency sets how many payloads each of gzip, lz4 and zstd compresses or
+// decompresses at once, 16 without it; a call beyond that waits for one to finish, as each
+// holds its own buffers, and snappy, which keeps none, is not limited. Panics outside 1 to 256.
+func WithCompressionConcurrency(concurrency int) StoreOption {
+	if concurrency < compress.MinimumConcurrency || concurrency > compress.MaximumConcurrency {
+		panic(fmt.Sprintf("journal.WithCompressionConcurrency: %d is outside %d to %d",
+			concurrency, compress.MinimumConcurrency, compress.MaximumConcurrency))
+	}
+	return func(settings *storeSettings) {
+		settings.compressionConcurrency = concurrency
 	}
 }
 

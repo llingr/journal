@@ -12,22 +12,26 @@ import (
 	"sync"
 )
 
-// gzipCompressor pools the single-use gzip writers and readers
+// gzipCompressor pools the single-use gzip writers and readers, at most one per slot in use
 type gzipCompressor struct {
+	limit   limiter
 	writers sync.Pool // *gzip.Writer at the constructed level
 	readers sync.Pool // *gzip.Reader
 }
 
 var ErrGzipLevel = errors.New("unsupported gzip level")
 
-// NewGzip with the supplied compress/gzip level; panics with ErrGzipLevel on a level gzip
-// does not support, as that is a wiring mistake
-func NewGzip(level int) Compressor {
+// NewGzip with the supplied compress/gzip level, running at most concurrency calls at once;
+// panics with ErrGzipLevel on a level gzip does not support, and with ErrConcurrency outside
+// MinimumConcurrency to MaximumConcurrency, as either is a wiring mistake
+func NewGzip(level int, concurrency int) Compressor {
 	isInRange := level >= gzip.DefaultCompression && level <= gzip.BestCompression
 	if level != gzip.HuffmanOnly && !isInRange {
 		panic(fmt.Errorf("%w: %d", ErrGzipLevel, level))
 	}
-	compressor := &gzipCompressor{}
+	compressor := &gzipCompressor{
+		limit: newLimiter(concurrency),
+	}
 
 	// A zero gzip.Writer resets to NoCompression, so the level is set at construction
 	compressor.writers.New = func() any {
@@ -50,6 +54,8 @@ func (gz *gzipCompressor) Compression() DataCompression {
 }
 
 func (gz *gzipCompressor) Compress(plain []byte) ([]byte, error) {
+	gz.limit.acquire()
+	defer gz.limit.release()
 	var compressed bytes.Buffer
 
 	writer := gz.writers.Get().(*gzip.Writer)
@@ -72,6 +78,8 @@ func (gz *gzipCompressor) Decompress(compressed []byte) ([]byte, error) {
 	if len(compressed) == 0 {
 		return nil, ErrEmptyInput
 	}
+	gz.limit.acquire()
+	defer gz.limit.release()
 	reader := gz.readers.Get().(*gzip.Reader)
 	err := reader.Reset(bytes.NewReader(compressed))
 	if err != nil {

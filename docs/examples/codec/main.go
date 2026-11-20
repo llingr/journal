@@ -77,7 +77,7 @@ func run(ctx context.Context) error {
 // stored columns say happened to each.
 func roundTrip(ctx context.Context, keyring encrypt.Keyring) error {
 	pipeline, err := codec.NewPipeline(
-		codec.CompressWith(compress.NewGzip(gzip.BestSpeed)),
+		codec.CompressWith(compress.NewGzip(gzip.BestSpeed, compress.DefaultConcurrency)),
 		codec.EncryptWith(encrypt.NewAESGCM(keyring)),
 	)
 	if err != nil {
@@ -139,7 +139,7 @@ func roundTrip(ctx context.Context, keyring encrypt.Keyring) error {
 // stored in the clear, and decode is told nothing.
 func selectPerEventType(ctx context.Context, keyring encrypt.Keyring) error {
 	pipeline, err := codec.NewPipeline(
-		codec.CompressWith(compress.NewGzip(gzip.BestSpeed)),
+		codec.CompressWith(compress.NewGzip(gzip.BestSpeed, compress.DefaultConcurrency)),
 		codec.EncryptWith(encrypt.NewAESGCM(keyring)),
 		codec.WithSelector(sealSensitiveEvents),
 	)

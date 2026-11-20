@@ -34,7 +34,8 @@ func TestWithNoOptionsPayloadsAreStoredAsTheyArrive(t *testing.T) {
 // TestCompressionThatDoesNotShrinkIsDiscarded: random bytes grow under gzip, so they are
 // stored as they came and recorded as uncompressed, which is what the columns must say.
 func TestCompressionThatDoesNotShrinkIsDiscarded(t *testing.T) {
-	pipeline := newPipeline(t, codec.CompressWith(compress.NewGzip(gzip.BestSpeed)))
+	pipeline := newPipeline(t,
+		codec.CompressWith(compress.NewGzip(gzip.BestSpeed, compress.DefaultConcurrency)))
 	random := make([]byte, 512)
 	_, _ = rand.Read(random)
 
@@ -61,7 +62,7 @@ func TestASelectorThatRefusesSkipsTheStage(t *testing.T) {
 		return eventType != "Small", eventType == "Secret"
 	}
 	pipeline := newPipeline(t,
-		codec.CompressWith(compress.NewGzip(gzip.BestSpeed)),
+		codec.CompressWith(compress.NewGzip(gzip.BestSpeed, compress.DefaultConcurrency)),
 		codec.EncryptWith(encrypt.NewAESGCM(keyring)),
 		codec.WithSelector(selector))
 
@@ -78,7 +79,7 @@ func TestASelectorThatRefusesSkipsTheStage(t *testing.T) {
 	}
 
 	unselective := newPipeline(t,
-		codec.CompressWith(compress.NewGzip(gzip.BestSpeed)),
+		codec.CompressWith(compress.NewGzip(gzip.BestSpeed, compress.DefaultConcurrency)),
 		codec.EncryptWith(encrypt.NewAESGCM(keyring)))
 	requireDecodes(t, unselective, small, compressible)
 	requireDecodes(t, unselective, secret, compressible)
@@ -166,12 +167,12 @@ func TestEncodeRefusesWhatCannotBeStored(t *testing.T) {
 // TestDecompressWithReadsAnAlgorithmNoLongerWritten: switching the written algorithm keeps the
 // old rows readable when the old one is named for reads.
 func TestDecompressWithReadsAnAlgorithmNoLongerWritten(t *testing.T) {
-	before := newPipeline(t, codec.CompressWith(compress.NewLZ4()))
+	before := newPipeline(t, codec.CompressWith(compress.NewLZ4(compress.DefaultConcurrency)))
 	written := encode(t, before, "Happened", compressible)
 
 	after := newPipeline(t,
-		codec.CompressWith(compress.NewGzip(gzip.BestSpeed)),
-		codec.DecompressWith(compress.NewLZ4()))
+		codec.CompressWith(compress.NewGzip(gzip.BestSpeed, compress.DefaultConcurrency)),
+		codec.DecompressWith(compress.NewLZ4(compress.DefaultConcurrency)))
 	requireDecodes(t, after, written, compressible)
 	if stored := encode(t, after, "Happened", compressible); stored.Compression != compress.Gzip {
 		t.Fatalf("after the switch new rows are %s, want gzip", stored.Compression)
