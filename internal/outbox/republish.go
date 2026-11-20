@@ -15,6 +15,9 @@ import (
 	"github.com/llingr/journal/streams"
 )
 
+// republishPageSize is how many versions a republish of every version reads at a time
+const republishPageSize = 250
+
 func (o *outbox) RepublishEvents(ctx context.Context, streamID uuid.UUID, fromVersion int32,
 	condition publish.RepublishCondition) (int, error) {
 	pending, err := o.pendingFrom(ctx, streamID, fromVersion)
@@ -22,19 +25,18 @@ func (o *outbox) RepublishEvents(ctx context.Context, streamID uuid.UUID, fromVe
 		return 0, err
 	}
 
-	var toSend []persistence.PersistedEvent
 	switch condition {
 	case publish.IfUnpublished:
+		var toSend []persistence.PersistedEvent
 		toSend, err = o.readVersions(ctx, streamID, pending)
+		if err != nil {
+			return 0, err
+		}
+		return o.sendAll(ctx, streamID, toSend)
 	case publish.Always:
-		toSend, err = o.readToHead(ctx, streamID, fromVersion)
-	default:
-		panic(fmt.Sprintf("publish: unknown republish condition %d", condition))
+		return o.sendToHead(ctx, streamID, fromVersion)
 	}
-	if err != nil {
-		return 0, err
-	}
-	return o.sendAll(ctx, streamID, toSend)
+	panic(fmt.Sprintf("publish: unknown republish condition %d", condition))
 }
 
 func (o *outbox) RepublishEvent(ctx context.Context, streamID uuid.UUID, version int32,
@@ -87,22 +89,40 @@ func (o *outbox) pendingFrom(ctx context.Context, streamID uuid.UUID,
 	return pending, nil
 }
 
-// readToHead reads the stream's events from fromVersion to its last
-func (o *outbox) readToHead(ctx context.Context, streamID uuid.UUID,
-	fromVersion int32) ([]persistence.PersistedEvent, error) {
+// sendToHead sends the stream's events from fromVersion to its last, reading and sending
+// republishPageSize at a time so a long stream is never held whole, and stops at the first
+// failure; it returns how many are durable
+func (o *outbox) sendToHead(ctx context.Context, streamID uuid.UUID,
+	fromVersion int32) (int, error) {
 	head, err := o.store.QueryHead(ctx, streamID)
 	if err != nil {
-		return nil, fmt.Errorf("republish stream %s: %w", streamID, err)
+		return 0, fmt.Errorf("republish stream %s: %w", streamID, err)
 	}
 	if fromVersion > head {
-		return nil, fmt.Errorf("republish stream %s from version %d, its last is %d: %w",
+		return 0, fmt.Errorf("republish stream %s from version %d, its last is %d: %w",
 			streamID, fromVersion, head, streams.ErrVersionMissing)
 	}
-	stored, err := o.store.QueryStreamRange(ctx, streamID, fromVersion, head)
-	if err != nil {
-		return nil, fmt.Errorf("republish stream %s: %w", streamID, err)
+
+	sent := 0
+	pageStart := fromVersion
+	for {
+		pageEnd := head
+		if head-pageStart >= republishPageSize {
+			pageEnd = pageStart + republishPageSize - 1
+		}
+		var page []persistence.PersistedEvent
+		page, err = o.store.QueryStreamRange(ctx, streamID, pageStart, pageEnd)
+		if err != nil {
+			return sent, fmt.Errorf("republish stream %s: %w", streamID, err)
+		}
+		var pageSent int
+		pageSent, err = o.sendAll(ctx, streamID, page)
+		sent += pageSent
+		if err != nil || pageEnd == head {
+			return sent, err
+		}
+		pageStart = pageEnd + 1
 	}
-	return stored, nil
 }
 
 // describeVersions names versions in ascending order as the ranges a reader acts on, such

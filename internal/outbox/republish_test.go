@@ -37,6 +37,85 @@ func TestRepublishEventsAlwaysSendsToTheHead(t *testing.T) {
 	requireVersions(t, "still pending", store.pendingVersions(streamID))
 }
 
+// TestRepublishEventsAlwaysReadsThePagesItSends: a long stream is read 250 versions at a time,
+// each page sent before the next is read, so a republish holds one page however long the
+// stream; a failure stops it there, reading nothing further
+func TestRepublishEventsAlwaysReadsThePagesItSends(t *testing.T) {
+	versionsFrom := func(first int32, last int32) []int32 {
+		var versions []int32
+		for version := first; version <= last; version++ {
+			versions = append(versions, version)
+		}
+		return versions
+	}
+	for _, testCase := range []struct {
+		name       string
+		from       int32
+		refuse     int32
+		wantSent   int
+		wantReads  []string
+		wantSentTo int32
+	}{
+		{name: "every page", from: 101, wantSent: 900, wantSentTo: 1000,
+			wantReads: []string{"101 to 350", "351 to 600", "601 to 850", "851 to 1000"}},
+		{name: "exactly one page", from: 751, wantSent: 250, wantSentTo: 1000,
+			wantReads: []string{"751 to 1000"}},
+		{name: "one more than a page", from: 750, wantSent: 251, wantSentTo: 1000,
+			wantReads: []string{"750 to 999", "1000 to 1000"}},
+		{name: "a refusal in the second page", from: 101, refuse: 400, wantSent: 299,
+			wantSentTo: 399, wantReads: []string{"101 to 350", "351 to 600"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, failed := newMemoryStore(), &failures{}
+			publisher := &recordingPublisher{
+				refuse: func(event streams.Event) error {
+					if event.Version == testCase.refuse {
+						return errors.New("refused")
+					}
+					return nil
+				},
+			}
+			sender := newOutbox(store, publisher, failed)
+			streamID := uuid.New()
+			store.append(streamID, time.Now(), versionsFrom(1, 1000)...)
+			markPublished(store, streamID, versionsFrom(1, testCase.from-1)...)
+
+			sent, err := sender.RepublishEvents(t.Context(), streamID, testCase.from,
+				publish.Always)
+			if sent != testCase.wantSent || (err != nil) != (testCase.refuse != 0) {
+				t.Fatalf("republish from %d: %d sent, %v; want %d", testCase.from, sent, err,
+					testCase.wantSent)
+			}
+			if reads := store.readRanges(); !slices.Equal(reads, testCase.wantReads) {
+				t.Fatalf("read %v, want %v", reads, testCase.wantReads)
+			}
+			requireVersions(t, "published", publisher.versions(streamID),
+				versionsFrom(testCase.from, testCase.wantSentTo)...)
+			requireVersions(t, "still pending", store.pendingVersions(streamID),
+				versionsFrom(testCase.wantSentTo+1, 1000)...)
+		})
+	}
+}
+
+// TestRepublishEventsIfUnpublishedReportsAFailedRead: pending versions whose events cannot be
+// read are the store's error, and nothing is sent
+func TestRepublishEventsIfUnpublishedReportsAFailedRead(t *testing.T) {
+	store, publisher, failed := newMemoryStore(), &recordingPublisher{}, &failures{}
+	sender := newOutbox(store, publisher, failed)
+	streamID := uuid.New()
+	store.append(streamID, time.Now(), 1, 2)
+	errRead := errors.New("the range read failed")
+	store.fail(&store.rangeErr, errRead)
+
+	sent, err := sender.RepublishEvents(t.Context(), streamID, 1, publish.IfUnpublished)
+	if sent != 0 || !errors.Is(err, errRead) {
+		t.Fatalf("republish of the pending with the read failing: %d sent, %v; want none "+
+			"and the store's error", sent, err)
+	}
+	requireVersions(t, "published", publisher.versions(streamID))
+	requireVersions(t, "still pending", store.pendingVersions(streamID), 1, 2)
+}
+
 // TestRepublishEventsIfUnpublishedSendsOnlyThePending: versions already published are not sent
 // again, and with nothing pending nothing is sent.
 func TestRepublishEventsIfUnpublishedSendsOnlyThePending(t *testing.T) {
